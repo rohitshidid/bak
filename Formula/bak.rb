@@ -2,7 +2,7 @@ class Bak < Formula
   desc "Per-file snapshots, diff, and restore without cwd clutter"
   homepage "https://github.com/rohitshidid/bak"
   url "https://github.com/rohitshidid/bak.git",
-      tag: "v0.1.0"
+      tag: "v0.1.1"
   license "MIT"
   head "https://github.com/rohitshidid/bak.git", branch: "main"
 
