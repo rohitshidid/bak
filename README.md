@@ -46,9 +46,10 @@ bak <file>                    snapshot now
 bak <file> -m "before tls"    snapshot with a note
 bak list <file>               list versions for a file
 bak list --all                list every tracked file
-bak diff <file>               latest snapshot vs current file
+bak diff <file>               compact changed hunks: latest snapshot vs current file
 bak diff <file> v2            v2 vs current file
 bak diff <file> v2 v4         v2 vs v4
+bak diff -f <file> v2         full-file diff, including unchanged lines
 bak restore <file>            interactive restore picker
 bak restore <file> v2         restore a specific version
 bak show <file> v2            print a version to stdout
@@ -64,6 +65,7 @@ bak gc                        purge histories for deleted files
     --keep N          auto-prune on snapshot, keeping newest N
     --yes             skip confirmation prompts
     --json            machine-readable output where supported
+-f, --full           show full-file diff instead of compact hunks
     --no-compress     store raw snapshots instead of zstd
     --no-deref        snapshot a symlink itself instead of target content
     --max-size SIZE   require --yes above this size, default 100MB
@@ -107,7 +109,7 @@ v1   2026-05-18 11:30     0.9 KB
 $ bak diff nginx.conf v2
 --- nginx.conf v2 (2026-05-20 16:44)
 +++ nginx.conf current
-@@ -1,3 +1,4 @@
+@@ -12,3 +12,4 @@
    listen 80;
 +  listen 443 ssl;
 

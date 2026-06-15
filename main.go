@@ -30,6 +30,7 @@ type options struct {
 	Keep       int
 	Yes        bool
 	JSON       bool
+	FullDiff   bool
 	NoCompress bool
 	NoDeref    bool
 	All        bool
@@ -223,6 +224,11 @@ func parseArgs(args []string) (string, []string, options, error) {
 			opts.Yes = true
 		case arg == "--json":
 			opts.JSON = true
+		case arg == "-f" || arg == "--full" || arg == "--full-diff":
+			if cmd != "diff" {
+				return "", nil, opts, errors.New("-f is only valid with bak diff")
+			}
+			opts.FullDiff = true
 		case arg == "--no-compress":
 			opts.NoCompress = true
 		case arg == "--no-deref":
@@ -272,7 +278,7 @@ Usage:
   bak <file> -m "before tls"    snapshot with a note
   bak list <file>               list versions
   bak list --all                list tracked files
-  bak diff <file> [vN] [vM]     diff snapshot/current
+  bak diff [-f] <file> [vN] [vM] diff snapshot/current
   bak restore <file> [vN]       restore, saving current first when needed
   bak show <file> vN            print a version to stdout
   bak rm <file>                 drop history for a file
@@ -284,6 +290,7 @@ Flags:
       --keep N          prune after snapshot or with prune
       --yes             skip confirmation prompts
       --json            machine-readable output where supported
+  -f, --full            show full-file diff instead of compact hunks
       --no-compress     store raw snapshots instead of zstd
       --no-deref        snapshot symlink itself instead of target content
       --max-size SIZE   max snapshot size before requiring --yes (default 100MB)
@@ -644,7 +651,7 @@ func diffFile(path string, specs []string, opts options) error {
 
 	fmt.Printf("--- %s %s%s\n", compactPath(meta.Path), leftName, timeSuffix(leftV.Time))
 	fmt.Printf("+++ %s %s%s\n", compactPath(meta.Path), rightName, timeSuffix(rightTime))
-	fmt.Print(unifiedDiff(string(left), string(right)))
+	fmt.Print(unifiedDiff(string(left), string(right), opts.FullDiff))
 	return nil
 }
 
@@ -1119,13 +1126,81 @@ func diffStat(a, b []byte) statResult {
 	return st
 }
 
-func unifiedDiff(a, b string) string {
+func unifiedDiff(a, b string, full bool) string {
 	left := splitLines(a)
 	right := splitLines(b)
 	ops := diffOps(left, right)
+	if !full {
+		return compactUnifiedDiff(ops, 3)
+	}
+	return renderDiffHunk(ops, 0, len(ops), len(left), len(right))
+}
+
+func compactUnifiedDiff(ops []diffOp, context int) string {
+	var changes []int
+	for i, op := range ops {
+		if op.kind != ' ' {
+			changes = append(changes, i)
+		}
+	}
+	if len(changes) == 0 {
+		return ""
+	}
+
 	var buf strings.Builder
-	fmt.Fprintf(&buf, "@@ -1,%d +1,%d @@\n", len(left), len(right))
-	for _, op := range ops {
+	for i := 0; i < len(changes); {
+		start := maxInt(0, changes[i]-context)
+		end := minInt(len(ops), changes[i]+context+1)
+		i++
+		for i < len(changes) {
+			nextStart := maxInt(0, changes[i]-context)
+			if nextStart > end {
+				break
+			}
+			end = maxInt(end, minInt(len(ops), changes[i]+context+1))
+			i++
+		}
+		buf.WriteString(renderDiffHunk(ops, start, end, -1, -1))
+	}
+	return buf.String()
+}
+
+func renderDiffHunk(ops []diffOp, start, end, forcedOldCount, forcedNewCount int) string {
+	oldStart, newStart := 1, 1
+	for _, op := range ops[:start] {
+		switch op.kind {
+		case ' ':
+			oldStart++
+			newStart++
+		case '-':
+			oldStart++
+		case '+':
+			newStart++
+		}
+	}
+
+	oldCount, newCount := 0, 0
+	for _, op := range ops[start:end] {
+		switch op.kind {
+		case ' ':
+			oldCount++
+			newCount++
+		case '-':
+			oldCount++
+		case '+':
+			newCount++
+		}
+	}
+	if forcedOldCount >= 0 {
+		oldCount = forcedOldCount
+	}
+	if forcedNewCount >= 0 {
+		newCount = forcedNewCount
+	}
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "@@ -%s +%s @@\n", diffRange(oldStart, oldCount), diffRange(newStart, newCount))
+	for _, op := range ops[start:end] {
 		buf.WriteByte(op.kind)
 		buf.WriteString(op.line)
 		if !strings.HasSuffix(op.line, "\n") {
@@ -1133,6 +1208,33 @@ func unifiedDiff(a, b string) string {
 		}
 	}
 	return buf.String()
+}
+
+func diffRange(start, count int) string {
+	if count == 0 {
+		if start > 0 {
+			start--
+		}
+		return fmt.Sprintf("%d,0", start)
+	}
+	if count == 1 {
+		return strconv.Itoa(start)
+	}
+	return fmt.Sprintf("%d,%d", start, count)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 type diffOp struct {
